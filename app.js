@@ -1,60 +1,47 @@
 /* ============================================================
    FORMER REBELS DATABASE SYSTEM - app.js
-   Storage: IndexedDB (records) + localStorage (users)
+   Storage: Firestore (records) + localStorage (users)
    ============================================================ */
 
-// -- INDEXEDDB SETUP ------------------------------------------
-const DB_NAME    = 'frdb';
-const DB_VERSION = 1;
-const STORE      = 'records';
-let db = null;
+// -- FIREBASE SETUP -------------------------------------------
+import { initializeApp }                          from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getFirestore, collection, getDocs,
+         doc, setDoc, deleteDoc }                 from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
+const firebaseConfig = {
+  apiKey:            'AIzaSyB0CnoQxX_2fzvszyjGV1WednWiQTThcME',
+  authDomain:        'formerrebeldb.firebaseapp.com',
+  projectId:         'formerrebeldb',
+  storageBucket:     'formerrebeldb.firebasestorage.app',
+  messagingSenderId: '279340107419',
+  appId:             '1:279340107419:web:b8c291f806ecf9c688683e',
+  measurementId:     'G-NDMWGGN364'
+};
+
+const firebaseApp = initializeApp(firebaseConfig);
+const fsdb        = getFirestore(firebaseApp);
+const COLLECTION  = 'records';
+
+// -- FIRESTORE WRAPPERS (same API as the old IndexedDB layer) --
 function openDB() {
-  return new Promise(function(resolve, reject) {
-    if (db) { resolve(db); return; }
-    var req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = function(e) {
-      var d = e.target.result;
-      if (!d.objectStoreNames.contains(STORE)) {
-        d.createObjectStore(STORE, { keyPath: 'id' });
-      }
-    };
-    req.onsuccess = function(e) { db = e.target.result; resolve(db); };
-    req.onerror   = function(e) { reject(e.target.error); };
-  });
+  // No-op — Firestore needs no explicit open step
+  return Promise.resolve();
 }
 
 function dbGetAll() {
-  return openDB().then(function(d) {
-    return new Promise(function(resolve, reject) {
-      var tx  = d.transaction(STORE, 'readonly');
-      var req = tx.objectStore(STORE).getAll();
-      req.onsuccess = function() { resolve(req.result || []); };
-      req.onerror   = function() { reject(req.error); };
-    });
+  return getDocs(collection(fsdb, COLLECTION)).then(function(snapshot) {
+    var results = [];
+    snapshot.forEach(function(d) { results.push(d.data()); });
+    return results;
   });
 }
 
 function dbPut(record) {
-  return openDB().then(function(d) {
-    return new Promise(function(resolve, reject) {
-      var tx  = d.transaction(STORE, 'readwrite');
-      var req = tx.objectStore(STORE).put(record);
-      req.onsuccess = function() { resolve(); };
-      req.onerror   = function() { reject(req.error); };
-    });
-  });
+  return setDoc(doc(fsdb, COLLECTION, record.id), record);
 }
 
 function dbDelete(id) {
-  return openDB().then(function(d) {
-    return new Promise(function(resolve, reject) {
-      var tx  = d.transaction(STORE, 'readwrite');
-      var req = tx.objectStore(STORE).delete(id);
-      req.onsuccess = function() { resolve(); };
-      req.onerror   = function() { reject(req.error); };
-    });
-  });
+  return deleteDoc(doc(fsdb, COLLECTION, id));
 }
 
 // -- USERS (localStorage) -------------------------------------
@@ -70,25 +57,6 @@ function initApp() {
     localStorage.setItem('frdb_users', JSON.stringify([
       { id: 'admin', username: 'ADMIN', password: 'admin123', role: 'ADMIN' }
     ]));
-  }
-  var old = localStorage.getItem('frdb_records');
-  if (old) {
-    var records;
-    try { records = JSON.parse(old); } catch(e) { records = []; }
-    if (records.length > 0) {
-      openDB().then(function() {
-        var promises = records.map(function(r) {
-          if (r.tribalGroup) r.tribalGroup = normalizeTribalGroup(r.tribalGroup) || r.tribalGroup;
-          return dbPut(r);
-        });
-        Promise.all(promises).then(function() {
-          localStorage.removeItem('frdb_records');
-          showToast(records.length + ' RECORDS MIGRATED TO INDEXEDDB', 'info');
-        });
-      });
-    } else {
-      localStorage.removeItem('frdb_records');
-    }
   }
 }
 
@@ -392,21 +360,11 @@ function updateStorageBar() {
       label.textContent = 'STORAGE INFO UNAVAILABLE';
     });
   } else {
-    // Fallback: estimate IndexedDB size from cached records JSON
-    dbGetAll().then(function(records) {
-      var json  = JSON.stringify(records);
-      var bytes = new Blob([json]).size;
-      var quota = 50 * 1024 * 1024; // assume 50 MB fallback
-      var pct   = Math.min((bytes / quota) * 100, 100);
-
-      fill.style.width    = pct.toFixed(1) + '%';
-      label.textContent   = pct.toFixed(1) + '% USED (EST.)';
-      usedEl.textContent  = 'USED: ' + formatBytes(bytes);
-      availEl.textContent = 'AVAILABLE: ~' + formatBytes(quota - bytes);
-      warnEl.style.display = pct >= 80 ? 'block' : 'none';
-    }).catch(function() {
-      label.textContent = 'STORAGE INFO UNAVAILABLE';
-    });
+    // Firestore is cloud-based — no local quota estimate available
+    label.textContent   = 'CLOUD STORAGE (FIRESTORE)';
+    usedEl.textContent  = 'USED: SEE FIREBASE CONSOLE';
+    availEl.textContent = 'AVAILABLE: CLOUD';
+    warnEl.style.display = 'none';
   }
 }
 
@@ -2285,28 +2243,9 @@ document.getElementById('deleteModal').addEventListener('click', function(e) { i
 openDB().then(function() {
   initApp();
   dbGetAll().then(function(records) {
-    console.log('[FRDB] IndexedDB loaded. Record count:', records.length);
-    if (records.length === 0) {
-      var old = localStorage.getItem('frdb_records');
-      if (old) {
-        try {
-          var parsed = JSON.parse(old);
-          if (parsed.length > 0) {
-            var promises = parsed.map(function(r) {
-              if (r.tribalGroup) r.tribalGroup = normalizeTribalGroup(r.tribalGroup) || r.tribalGroup;
-              return dbPut(r);
-            });
-            Promise.all(promises).then(function() {
-              localStorage.removeItem('frdb_records');
-              showToast(parsed.length + ' RECORDS RECOVERED FROM OLD STORAGE', 'success');
-              if (currentPage === 'dashboard' || currentPage === 'records') showPage(currentPage);
-            });
-          }
-        } catch(e) { console.error('Migration error:', e); }
-      }
-    }
+    console.log('[FRDB] Firestore loaded. Record count:', records.length);
   });
 }).catch(function(err) {
-  console.error('[FRDB] Failed to open IndexedDB:', err);
-  alert('DATABASE ERROR: ' + err.message + '\n\nTry opening the app in Chrome or Edge.');
+  console.error('[FRDB] Failed to connect to Firestore:', err);
+  alert('DATABASE ERROR: ' + err.message + '\n\nCheck your internet connection.');
 });
