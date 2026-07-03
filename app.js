@@ -2025,13 +2025,20 @@ function importJSON(event) {
       return;
     }
 
-    if (!backup || !Array.isArray(backup.records)) {
+    // Support both {version,records} format and a bare array
+    var records = null;
+    if (backup && Array.isArray(backup.records)) {
+      records = backup.records;
+    } else if (Array.isArray(backup)) {
+      records = backup;
+    }
+
+    if (!records) {
       showToast('UNRECOGNIZED BACKUP FORMAT', 'error');
       return;
     }
 
-    var records = backup.records;
-    var users   = Array.isArray(backup.users) ? backup.users : null;
+    var users = (backup && Array.isArray(backup.users)) ? backup.users : null;
 
     if (records.length === 0 && (!users || users.length === 0)) {
       showToast('BACKUP FILE IS EMPTY', 'info');
@@ -2043,27 +2050,52 @@ function importJSON(event) {
       'Existing records with matching IDs will be overwritten.';
     if (!confirm(confirmMsg)) return;
 
-    // Import records into IndexedDB
-    var recPromises = records.map(function(r) {
-      if (r.tribalGroup) r.tribalGroup = normalizeTribalGroup(r.tribalGroup) || r.tribalGroup;
-      return dbPut(r);
+    showToast('RESTORING ' + records.length + ' RECORDS...', 'info');
+
+    // Ensure every record has a valid id, normalize tribal group
+    var prepared = records.map(function(r) {
+      var rec = Object.assign({}, r);
+      if (!rec.id || typeof rec.id !== 'string' || rec.id.trim() === '') {
+        rec.id = genId();
+      }
+      if (rec.tribalGroup) {
+        rec.tribalGroup = normalizeTribalGroup(rec.tribalGroup) || rec.tribalGroup;
+      }
+      return rec;
     });
 
-    Promise.all(recPromises).then(function() {
-      // Optionally restore users (keep existing admin password, only restore operators)
-      if (users && users.length > 0) {
-        var existingUsers = getUsers();
-        var adminUser     = existingUsers.find(function(u) { return u.role === 'ADMIN'; });
-        var restoredUsers = users.filter(function(u) { return u.role !== 'ADMIN'; });
-        var finalUsers    = adminUser ? [adminUser].concat(restoredUsers) : restoredUsers;
-        saveUsers(finalUsers);
+    // Write one at a time to Firestore so a single failure doesn't block the rest
+    var succeeded = 0;
+    var failed    = 0;
+
+    function writeNext(index) {
+      if (index >= prepared.length) {
+        // All done
+        if (users && users.length > 0) {
+          var existingUsers = getUsers();
+          var adminUser     = existingUsers.find(function(u) { return u.role === 'ADMIN'; });
+          var restoredUsers = users.filter(function(u) { return u.role !== 'ADMIN'; });
+          var finalUsers    = adminUser ? [adminUser].concat(restoredUsers) : restoredUsers;
+          saveUsers(finalUsers);
+        }
+        var msg = succeeded + ' RECORDS RESTORED SUCCESSFULLY';
+        if (failed > 0) msg += ' (' + failed + ' FAILED)';
+        showToast(msg, failed > 0 ? 'error' : 'success');
+        allRecordsCache = [];
+        showPage('dashboard');
+        return;
       }
-      showToast(records.length + ' RECORDS RESTORED SUCCESSFULLY', 'success');
-      allRecordsCache = [];
-      showPage('dashboard');
-    }).catch(function(err) {
-      showToast('RESTORE FAILED: ' + err.message, 'error');
-    });
+      dbPut(prepared[index]).then(function() {
+        succeeded++;
+        writeNext(index + 1);
+      }).catch(function(err) {
+        console.error('Failed to restore record:', prepared[index].id, err);
+        failed++;
+        writeNext(index + 1);
+      });
+    }
+
+    writeNext(0);
   };
   reader.readAsText(file);
 }
