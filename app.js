@@ -334,34 +334,35 @@ function updateStorageBar() {
   var availEl = document.getElementById('storageAvailBytes');
   var warnEl  = document.getElementById('storageWarning');
 
-  if (navigator.storage && navigator.storage.estimate) {
-    navigator.storage.estimate().then(function(est) {
-      var used  = est.usage  || 0;
-      var quota = est.quota  || 0;
-      var pct   = quota > 0 ? Math.min((used / quota) * 100, 100) : 0;
-      var avail = quota - used;
+  // Firestore free tier: 1 GiB storage limit
+  var QUOTA = 1 * 1024 * 1024 * 1024;
 
-      fill.style.width = pct.toFixed(1) + '%';
-      fill.className   = 'storage-bar-fill' +
-        (pct >= 90 ? ' storage-bar-critical' : pct >= 70 ? ' storage-bar-warning' : '');
+  label.textContent = 'CALCULATING...';
 
-      label.textContent   = pct.toFixed(1) + '% USED';
-      label.className     = 'storage-used-label' +
-        (pct >= 90 ? ' storage-label-critical' : pct >= 70 ? ' storage-label-warning' : '');
+  dbGetAll().then(function(records) {
+    // Estimate size from JSON serialization of all records
+    var json  = JSON.stringify(records);
+    var bytes = new Blob([json]).size;
+    var pct   = Math.min((bytes / QUOTA) * 100, 100);
+    var avail = QUOTA - bytes;
 
-      usedEl.textContent  = 'USED: ' + formatBytes(used);
-      availEl.textContent = 'AVAILABLE: ' + formatBytes(avail > 0 ? avail : 0);
-      warnEl.style.display = pct >= 80 ? 'block' : 'none';
-    }).catch(function() {
-      label.textContent = 'STORAGE INFO UNAVAILABLE';
-    });
-  } else {
-    // Firestore is cloud-based — no local quota estimate available
-    label.textContent   = 'CLOUD STORAGE (FIRESTORE)';
-    usedEl.textContent  = 'USED: SEE FIREBASE CONSOLE';
-    availEl.textContent = 'AVAILABLE: CLOUD';
+    fill.style.width = pct.toFixed(2) + '%';
+    fill.className   = 'storage-bar-fill' +
+      (pct >= 90 ? ' storage-bar-critical' : pct >= 70 ? ' storage-bar-warning' : '');
+
+    label.textContent = '☁ ' + pct.toFixed(2) + '% OF FREE TIER USED';
+    label.className   = 'storage-used-label' +
+      (pct >= 90 ? ' storage-label-critical' : pct >= 70 ? ' storage-label-warning' : '');
+
+    usedEl.textContent  = 'CLOUD USED (EST.): ' + formatBytes(bytes) + '  •  ' + records.length + ' RECORDS';
+    availEl.textContent = 'FREE TIER REMAINING: ~' + formatBytes(avail > 0 ? avail : 0) + ' of 1 GB';
+    warnEl.style.display = pct >= 80 ? 'block' : 'none';
+  }).catch(function() {
+    label.textContent   = '☁ FIRESTORE (CLOUD)';
+    usedEl.textContent  = 'COULD NOT ESTIMATE USAGE';
+    availEl.textContent = 'FREE TIER: 1 GB';
     warnEl.style.display = 'none';
-  }
+  });
 }
 
 // -- GENERATE SUMMARY REPORT ----------------------------------
