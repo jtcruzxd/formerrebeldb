@@ -4,11 +4,7 @@
    ============================================================ */
 
 // -- FIREBASE SETUP -------------------------------------------
-import { initializeApp }                          from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getFirestore, collection, getDocs,
-         doc, setDoc, deleteDoc }                 from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-
-const firebaseConfig = {
+var firebaseConfig = {
   apiKey:            'AIzaSyB0CnoQxX_2fzvszyjGV1WednWiQTThcME',
   authDomain:        'formerrebeldb.firebaseapp.com',
   projectId:         'formerrebeldb',
@@ -18,9 +14,9 @@ const firebaseConfig = {
   measurementId:     'G-NDMWGGN364'
 };
 
-const firebaseApp = initializeApp(firebaseConfig);
-const fsdb        = getFirestore(firebaseApp);
-const COLLECTION  = 'records';
+firebase.initializeApp(firebaseConfig);
+var fsdb       = firebase.firestore();
+var COLLECTION = 'records';
 
 // -- FIRESTORE WRAPPERS (same API as the old IndexedDB layer) --
 function openDB() {
@@ -29,7 +25,7 @@ function openDB() {
 }
 
 function dbGetAll() {
-  return getDocs(collection(fsdb, COLLECTION)).then(function(snapshot) {
+  return fsdb.collection(COLLECTION).get().then(function(snapshot) {
     var results = [];
     snapshot.forEach(function(d) { results.push(d.data()); });
     return results;
@@ -37,11 +33,11 @@ function dbGetAll() {
 }
 
 function dbPut(record) {
-  return setDoc(doc(fsdb, COLLECTION, record.id), record);
+  return fsdb.collection(COLLECTION).doc(record.id).set(record);
 }
 
 function dbDelete(id) {
-  return deleteDoc(doc(fsdb, COLLECTION, id));
+  return fsdb.collection(COLLECTION).doc(id).delete();
 }
 
 // -- USERS (localStorage) -------------------------------------
